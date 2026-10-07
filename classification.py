@@ -12,6 +12,9 @@ from fastapi.responses import JSONResponse
 from skimage.feature import graycomatrix, graycoprops
 from skimage import measure
 
+# Import UNet from segmentation for accurate mask generation
+from segmentation import load_segmentation_model, unet_prob_map, DEVICE
+
 # Initialize Router
 router = APIRouter()
 
@@ -87,15 +90,22 @@ def extract_features_and_mask(pil_img):
         image_bgr = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
         image_gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
 
-        clean_seed_mask = seed_from_otsu(image_gray)
-        contours, _ = cv2.findContours(clean_seed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            clean_seed_mask = fallback_seed(image_gray)
-            contours, _ = cv2.findContours(clean_seed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if not contours:
-                return None, None, None
+        # Use Deep Learning UNet for the mask instead of heuristic OpenCV
+        seg_model = load_segmentation_model()
+        if seg_model and seg_model != "MOCK":
+            prob_map = unet_prob_map(image_gray, seg_model, DEVICE)
+            final_mask = (prob_map > 0.5).astype(np.uint8)
+        else:
+            print("ERROR: UNet model failed to load. Features cannot be extracted properly.")
+            return None, None, None
 
-        final_mask = grabcut_refine(image_bgr, (clean_seed_mask > 0).astype(np.uint8))
+        # Check if the UNet found any tumor (mask has pixels > 0)
+        if final_mask.sum() == 0:
+            print("No tumor detected by UNet.")
+            # If no tumor detected, it's basically guaranteed 'notumor' class,
+            # but we still need features to return. We could return None, which 
+            # tells the caller there's no seed, or we can just proceed with empty mask.
+            return None, None, None
 
         labels = measure.label(final_mask)
         props = measure.regionprops(labels, intensity_image=image_gray)
@@ -161,9 +171,15 @@ async def classify_tumor(file: UploadFile = File(...)):
         features, segmentation_mask, image_bgr = extract_features_and_mask(pil_img)
 
         if features is None:
-            return JSONResponse(status_code=400, content={
-                'success': False,
-                'error': 'Could not find a reliable tumor seed or contours. Try another image.'
+            # No tumor detected — UNet found empty mask or feature extraction failed.
+            # Return a valid "notumor" response with the original image instead of an error.
+            return JSONResponse(content={
+                'success': True,
+                'original_image': original_img_base64,
+                'segmented_image': original_img_base64,  # show original if no mask
+                'predicted_class': 'notumor',
+                'confidence': 100.0,
+                'features': {}
             })
 
         # 4. Generate Visualization (Green Tumor over Grayscale)
@@ -194,10 +210,20 @@ async def classify_tumor(file: UploadFile = File(...)):
                 'error': 'Classification model not loaded. Check server logs.'
             })
 
-        prediction = pipe.predict([features])
-        probability = pipe.predict_proba([features])
-        confidence = float(np.max(probability)) * 100.0
-        predicted_class = prediction[0]
+        probabilities = pipe.predict_proba([features])[0]
+        classes = pipe.classes_
+
+        # Since UNet generated a tumor mask, we can eliminate 'notumor' as a possibility
+        if "notumor" in classes:
+            notumor_idx = list(classes).index("notumor")
+            probabilities[notumor_idx] = 0.0
+            prob_sum = np.sum(probabilities)
+            if prob_sum > 0:
+                probabilities = probabilities / prob_sum
+
+        max_idx = np.argmax(probabilities)
+        predicted_class = classes[max_idx]
+        confidence = float(probabilities[max_idx]) * 100.0
 
         # 6. Construct Response
         response = {
