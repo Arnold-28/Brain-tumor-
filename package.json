@@ -1,0 +1,17 @@
+{
+  "name": "brain-tumor-",
+  "version": "1.0.0",
+  "description": "Short brain tumor mini-project API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --check index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "http://localhost:26831/Arnold-28/Brain-tumor-"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

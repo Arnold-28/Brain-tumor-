@@ -1,0 +1,17 @@
+[
+  {
+    "name": "Glioma",
+    "grade": "I-IV",
+    "note": "Starts in glial cells and can be low or high grade."
+  },
+  {
+    "name": "Meningioma",
+    "grade": "Mostly benign",
+    "note": "Grows from the meninges around the brain and spinal cord."
+  },
+  {
+    "name": "Pituitary Tumor",
+    "grade": "Usually benign",
+    "note": "Forms in the pituitary gland and may affect hormones."
+  }
+]
